@@ -75,6 +75,14 @@ extern "C" {
 #include <errno.h>
 #include <signal.h>
 
+// what the fuck is wrong with you microsoft
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
 #if __GNUC__
 #define if_unlikely(x) if (__builtin_expect(x, 0))
 #else
@@ -90,13 +98,6 @@ extern "C" {
 	#elif V_UNIXY
 		#include <alloca.h>
 	#endif
-#endif
-
-#if V_WINDOWS
-struct timespec {
-	time_t tv_sec;
-	long tv_nsec;
-};
 #endif
 
 // ---- WINAPI FUNCTIONS ----
@@ -140,9 +141,9 @@ void OutputDebugStringA(const char *);
 // print - like printf but works on windows
 #if V_WINDOWS
 	#define print(...) do {\
-		char buffer[1024] = {0};\
-		snprintf(buffer, sizeof buffer - 1, __VA_ARGS__);\
-		OutputDebugStringA(buffer);\
+		char _buf[1024] = {0};\
+		snprintf(_buf, sizeof _buf - 1, __VA_ARGS__);\
+		OutputDebugStringA(_buf);\
 	} while (0)
 #else
 	#define print printf
@@ -2841,14 +2842,6 @@ V_DECL void  V_debug_free(void *, const char *, int);
 #endif
 
 // ---- FUNCTION DEFINITIONS ----
-
-#if V_MSVC
-V_DECL float fabsf(float x) {
-	if (x >= 0) return x;
-	return -x;
-}
-#endif
-
 // --- MISC ---
 V_DECL uint16_t *memchr16(uint16_t *mem, uint16_t c, size_t n) {
 	uint16_t *p, *end = mem + n;
@@ -4227,6 +4220,8 @@ static inline uint32_t arr_len(const void *arr) {
 
 // grow array to fit one more member
 static void *arr_grow1_(void *arr, size_t member_size, const char *file, int line) {
+	(void)file;
+	(void)line;
 	if (arr) {
 		ArrHeader *hdr = arr_hdr_(arr);
 		if_unlikely (hdr->len >= hdr->cap) {
@@ -4640,6 +4635,7 @@ V_DECL bool fs_copy_file(const char *in_filename, const char *out_filename) {
 	}
 #else
 	// -- WINAPI DECLARATIONS --
+	// I HATE WINDOWS.H
 	typedef uint32_t DWORD, *LPDWORD;
 	typedef struct _FILETIME {
 		DWORD dwLowDateTime;
@@ -4647,10 +4643,12 @@ V_DECL bool fs_copy_file(const char *in_filename, const char *out_filename) {
 	} FILETIME, *PFILETIME, *LPFILETIME;
 	typedef const char *LPCSTR;
 	typedef char *LPSTR, *PSTR;
+	typedef wchar_t *LPWSTR, *PWSTR;
+	typedef const wchar_t *LPCWSTR;
 	typedef char CHAR;
 	typedef long LONG;
 	typedef unsigned char *PUCHAR;
-	typedef void *HANDLE, *LPVOID, *PVOID;
+	typedef void *HANDLE, *LPVOID, *PVOID, *HLOCAL;
 	typedef PVOID BCRYPT_ALG_HANDLE;
 	typedef int BOOL;
 	typedef int INT;
@@ -4696,6 +4694,9 @@ V_DECL bool fs_copy_file(const char *in_filename, const char *out_filename) {
 	V_WINDECL BOOL V_WINCALL CreateDirectoryA(LPCSTR, LPSECURITY_ATTRIBUTES);
 	V_WINDECL BOOL V_WINCALL GetFileTime(HANDLE, LPFILETIME, LPFILETIME, LPFILETIME);
 	V_WINDECL DWORD V_WINCALL GetCurrentDirectoryA(DWORD, LPSTR);
+	V_WINDECL LPWSTR *V_WINCALL CommandLineToArgvW(LPCWSTR, int *);
+	V_WINDECL LPWSTR V_WINCALL GetCommandLineW(void);
+	V_WINDECL HLOCAL V_WINCALL LocalFree(HLOCAL);
 	NTSTATUS V_WINCALL BCryptGenRandom(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
 
 
@@ -12268,14 +12269,16 @@ static void V_buffer_delete(GLuint buffer) {
 		if (p) {
 			*p = 0;
 		} else {
-			char label[64] = {0};
 			print("Unknown buffer %u freed", buffer);
 		#if V_GL_LABEL_OBJECTS
-			gl.GetObjectLabel(GL_BUFFER, buffer, sizeof label, NULL, label);
-			if (*label) {
-				print(" with label %s", label);
-			} else {
-				print(" with no label?");
+			{
+				char label[64] = {0};
+				gl.GetObjectLabel(GL_BUFFER, buffer, sizeof label, NULL, label);
+				if (*label) {
+					print(" with label %s", label);
+				} else {
+					print(" with no label?");
+				}
 			}
 		#endif
 			print("\n");
@@ -12322,14 +12325,16 @@ static void V_array_delete(GLuint array) {
 		if (p) {
 			*p = 0;
 		} else {
-			char label[64] = {0};
 			print("Unknown vertex array %u freed", array);
 		#if V_GL_LABEL_OBJECTS
-			gl.GetObjectLabel(GL_VERTEX_ARRAY, array, sizeof label, NULL, label);
-			if (*label) {
-				print(" with label %s", label);
-			} else {
-				print(" with no label?");
+			{
+				char label[64] = {0};
+				gl.GetObjectLabel(GL_VERTEX_ARRAY, array, sizeof label, NULL, label);
+				if (*label) {
+					print(" with label %s", label);
+				} else {
+					print(" with no label?");
+				}
 			}
 		#endif
 			print("\n");
@@ -12352,14 +12357,16 @@ static void V_gl_quit(void) {
 	for (i = 0; i < V_BUFFER_TRACK_MAX; ++i) {
 		GLuint buffer = V_unfreed_buffers[i];
 		if_unlikely (buffer) {
-			char label[64] = {0};
 			print("Buffer %u not freed", buffer);
 		#if V_GL_LABEL_OBJECTS
-			gl.GetObjectLabel(GL_BUFFER, buffer, sizeof label, NULL, label);
-			if (*label) {
-				print(" (label: %s)", label);
-			} else {
-				print(" (unlabeled?)");
+			{
+				char label[64] = {0};
+				gl.GetObjectLabel(GL_BUFFER, buffer, sizeof label, NULL, label);
+				if (*label) {
+					print(" (label: %s)", label);
+				} else {
+					print(" (unlabeled?)");
+				}
 			}
 		#endif
 			print("\n");
@@ -12369,14 +12376,16 @@ static void V_gl_quit(void) {
 	for (i = 0; i < V_ARRAY_TRACK_MAX; ++i) {
 		GLuint array = V_unfreed_arrays[i];
 		if_unlikely (array) {
-			char label[64] = {0};
 			print("Vertex array %u not freed", array);
 		#if V_GL_LABEL_OBJECTS
-			gl.GetObjectLabel(GL_VERTEX_ARRAY, array, sizeof label, NULL, label);
-			if (*label) {
-				print(" (label: %s)", label);
-			} else {
-				print(" (unlabeled?)");
+			{
+				char label[64] = {0};
+				gl.GetObjectLabel(GL_VERTEX_ARRAY, array, sizeof label, NULL, label);
+				if (*label) {
+					print(" (label: %s)", label);
+				} else {
+					print(" (unlabeled?)");
+				}
 			}
 		#endif
 			print("\n");
@@ -13627,13 +13636,15 @@ static void model_delete(Model *model) {
 		LPWSTR* wide_argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 		char** argv = malloc(argc * sizeof *argv);
 		if (!argv) {
-			die("Out of memory.");
+			return -1;
 		}
 		for (int i = 0; i < argc; i++) {
 			LPWSTR wide_arg = wide_argv[i];
 			int len = (int)wcslen(wide_arg);
 			argv[i] = malloc(len + 1);
-			if (!argv[i]) die("Out of memory.");
+			if (!argv[i]) {
+				return -1;
+			}
 			// @TODO(eventually) : proper unicode handling
 			for (int j = 0; j <= len; j++)
 				argv[i][j] = (char)wide_arg[j];

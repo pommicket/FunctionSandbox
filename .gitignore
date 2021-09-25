@@ -6,6 +6,7 @@ TAGS
 *.exe
 *.ilk
 *.pdb
+*.obj
 *.dll
 *.lib
 SDL2
