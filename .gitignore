@@ -1,0 +1,11 @@
+sandbox
+tags
+TAGS
+*~
+*.swp
+*.exe
+*.ilk
+*.pdb
+*.dll
+*.lib
+SDL2
