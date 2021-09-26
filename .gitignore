@@ -6,7 +6,8 @@ TAGS
 *.exe
 *.ilk
 *.pdb
-*.obj
+./*.obj
 *.dll
 *.lib
 SDL2
+*.mtl
