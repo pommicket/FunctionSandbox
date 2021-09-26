@@ -12788,6 +12788,9 @@ typedef struct {
 
 V_DECL bool model_load(Model *model, GLProgram *program, const char *filename) {
 	char *dot = strchr(filename, '.');
+	
+	memset(model, 0, sizeof *model);
+
 	if (dot) {
 		FILE *fp = fopen(filename, "r");
 		if (fp) {

@@ -1,4 +1,4 @@
-uniform vec3 u_color;
+uniform vec4 u_color;
 uniform vec3 u_directional_light1; // (direction to light)
 uniform vec3 u_directional_light1_color;
 uniform vec3 u_directional_light2;
@@ -18,5 +18,5 @@ void main() {
 	} else {
 		L = vec3(1.0, 1.0, 1.0);
 	}
-	gl_FragColor = vec4(L * u_color, 1.0);
+	gl_FragColor = vec4(L * u_color.xyz, u_color.w);
 }
