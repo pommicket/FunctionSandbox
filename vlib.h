@@ -10778,7 +10778,7 @@ V_DECL vec2 rand_unit_vec2(void) {
 V_DECL vec3 rand_unit_vec3(void) {
 	vec3 v;
 	do
-		v = rand_vec3();
+		v = addc3(scale3(rand_vec3(),2),-1);
 	while (sqlength3(v) > 1);
 	return normalize3(v);
 }
@@ -10786,7 +10786,7 @@ V_DECL vec3 rand_unit_vec3(void) {
 V_DECL vec4 rand_unit_vec4(void) {
 	vec4 v;
 	do
-		v = rand_vec4();
+		v = addc4(scale4(rand_vec4(),2),-1);
 	while (sqlength4(v) > 1);
 	return normalize4(v);
 }

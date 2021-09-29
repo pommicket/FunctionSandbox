@@ -4,7 +4,7 @@
 
 static const float PLAYER_HEIGHT = 1.5f;
 
-static GLProgram *program_unlit, *program_main, *program_grain;
+static GLProgram *program_grain;
 static mat4 g_camera;
 static bool g_wireframe;
 
@@ -38,8 +38,6 @@ int main(int argc, char **argv) {
 	Player player_data = {0}, *player = &player_data;
 	World world_data = {0}, *world = &world_data;
 
-	program_unlit = gl_program_new("unlitv.glsl", "unlitf.glsl");
-	program_main  = gl_program_new("mainv.glsl", "mainf.glsl");
 	program_grain = gl_program_new("grainv.glsl", "grainf.glsl");
 	typedef struct {
 		vec3 pos;
@@ -66,8 +64,9 @@ int main(int argc, char **argv) {
 
 	window_set_relative_mouse(1);
 
+	float grain_gen_radius = 2;
 	for (int i = 0; i < 100000; ++i) {
-		arr_add(world->grains, addc3(scale3(rand_vec3(), 4),-2));
+		arr_add(world->grains, scale3(rand_unit_vec3(), grain_gen_radius * randf()));
 	}
 	const uint32_t tex_width = 1024;
 	uint32_t tex_chunk_size = tex_width * 4; // height must be a multiple of 4
@@ -126,13 +125,24 @@ int main(int argc, char **argv) {
 		if (!g_wireframe)
 			gl.Enable(GL_DEPTH_TEST);
 		
+		{
+			uint n_new_grains = 10000;
+			uint32_t ngrains = arr_len(world->grains);
+			vec3 *p, *end;
+			memmove(world->grains, world->grains + n_new_grains, (ngrains - n_new_grains) * sizeof *world->grains);
+			end = world->grains + ngrains;
+			for (p = end - n_new_grains; p < end; ++p) {
+				*p = scale3(rand_unit_vec3(), grain_gen_radius * randf());
+			}
+		}
+
 		{ // fixed time step (for consistency)
 			float t = dt + leftover_time;
 			while (t >= timestep) {
 				arr_foreachp(world->grains, vec3, g) {
 					float x = g->x, y = g->y, z = g->z;
 					(void)x; (void)y; (void)z;
-					vec3 wind = Vec3(-z, y, x);
+					vec3 wind = Vec3(-z, y*100, x);
 					*g = add3(*g, scale3(wind, timestep));
 				}
 				t -= timestep;
