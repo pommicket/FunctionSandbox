@@ -2697,6 +2697,8 @@ typedef union {
 	f(DebugMessageCallback, DEBUGMESSAGECALLBACK) \
 	f(DebugMessageControl, DEBUGMESSAGECONTROL) \
 	f(DrawArrays, DRAWARRAYS) \
+	f(DrawArraysInstanced, DRAWARRAYSINSTANCED) \
+	f(DrawElementsInstanced, DRAWELEMENTSINSTANCED) \
 	f(EnableVertexAttribArray, ENABLEVERTEXATTRIBARRAY) \
 	f(PolygonMode, POLYGONMODE) \
 	f(Flush, FLUSH) \
@@ -4277,24 +4279,17 @@ static void arr_reserve_(void **arr, size_t member_size, size_t n) {
 		} else {
 			// increase capacity of array
 			ArrHeader *hdr = arr_hdr_(*arr);
-			uint32_t curr_cap = hdr->cap;
-			if (n > curr_cap) {
-				ArrHeader *old_hdr = hdr;
-				while (n > curr_cap) {
-					if (curr_cap < UINT32_MAX/2)
-						curr_cap *= 2;
-					else
-						curr_cap = UINT32_MAX;
-				}
-				hdr = (ArrHeader *)realloc(hdr, sizeof(ArrHeader) + curr_cap * member_size);
-				if (hdr) {
-					hdr->cap = curr_cap;
-				} else {
-					// growing failed
-					free(old_hdr);
-					*arr = NULL;
-					return;
-				}
+			ArrHeader *old_hdr = hdr;
+			if (old_hdr->len > n) old_hdr->len = (uint32_t)n;
+			hdr = (ArrHeader *)realloc(hdr, sizeof(ArrHeader) + n * member_size);
+			if (hdr) {
+				hdr->cap = (uint32_t)n;
+				memset((char *)hdr->data + member_size * hdr->len, 0, (hdr->cap - hdr->len) * member_size);
+			} else {
+				// growing failed
+				free(old_hdr);
+				*arr = NULL;
+				return;
 			}
 			*arr = hdr->data;
 		}
@@ -12778,6 +12773,7 @@ V_DECL float window_frame(void) {
 	V_last_frame = now;
 	V_vertex_count = 0;
 
+	dt = clamp(dt, 0.001f, 0.1f); // prevent really short/long frames
 	return dt;
 }
 typedef struct {
