@@ -1,3 +1,6 @@
+// @TODO:
+//  - run grain computations on GPU
+//  - config file
 #define V_GL 1
 #define V_WINDOWED 1
 #include "vlib.h"
@@ -66,7 +69,7 @@ int main(int argc, char **argv) {
 
 	float grain_gen_radius = 2;
 	for (int i = 0; i < 100000; ++i) {
-		arr_add(world->grains, scale3(rand_unit_vec3(), grain_gen_radius * randf()));
+		arr_add(world->grains, scale3(addc3(rand_vec3(), -.5f), grain_gen_radius * 2));
 	}
 	const uint32_t tex_width = 1024;
 	uint32_t tex_chunk_size = tex_width * 4; // height must be a multiple of 4
@@ -75,6 +78,9 @@ int main(int argc, char **argv) {
 	uint32_t tex_height = tex_area / tex_width;
 
 	arr_reserve(world->grains, tex_area);
+	arr_foreachp(world->grains, vec3, g) {
+		g->x = g->y = g->z = NAN;
+	}
 
 	float leftover_time = 0;
 
@@ -126,13 +132,13 @@ int main(int argc, char **argv) {
 			gl.Enable(GL_DEPTH_TEST);
 		
 		{
-			uint n_new_grains = 10000;
+			uint n_new_grains = 100;
 			uint32_t ngrains = arr_len(world->grains);
 			vec3 *p, *end;
 			memmove(world->grains, world->grains + n_new_grains, (ngrains - n_new_grains) * sizeof *world->grains);
 			end = world->grains + ngrains;
 			for (p = end - n_new_grains; p < end; ++p) {
-				*p = scale3(rand_unit_vec3(), grain_gen_radius * randf());
+				*p = scale3(addc3(rand_vec3(), -.5f), grain_gen_radius * 2);
 			}
 		}
 
@@ -142,7 +148,7 @@ int main(int argc, char **argv) {
 				arr_foreachp(world->grains, vec3, g) {
 					float x = g->x, y = g->y, z = g->z;
 					(void)x; (void)y; (void)z;
-					vec3 wind = Vec3(-z, y*100, x);
+					vec3 wind = Vec3(-tanf(y)*x, cosf(z)*y, sinf(z)*x);
 					*g = add3(*g, scale3(wind, timestep));
 				}
 				t -= timestep;
@@ -157,7 +163,7 @@ int main(int argc, char **argv) {
 		}
 		gl_program_use(program_grain);
 		gl_uniformM4(program_grain, "u_transform", &g_camera);
-		gl_uniform4f(program_grain, "u_color", Vec4(1,0,0,1));
+		gl_uniform4f(program_grain, "u_color", Vec4(1.0f,0.8f,.6f,1));
 		gl.BindTexture(GL_TEXTURE_2D, grains_texture);
 		gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, (GLsizei)tex_width, (GLsizei)tex_height, 0, GL_RGB, GL_FLOAT, world->grains);
 		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
