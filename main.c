@@ -1,12 +1,12 @@
 // @TODO:
-//  - config file
-//  - color coding based on speed
+//  - auto-reload config file
+//  - config selection menu
+//  - optional opacity (color1,2 can have alpha)
 #define V_GL 1
 #define V_WINDOWED 1
 #include "vlib.h"
 
 static mat4 g_camera;
-static bool g_wireframe;
 static const uint32_t tex_width = 1024;
 
 typedef struct {
@@ -22,8 +22,8 @@ typedef struct {
 	uint32_t ngrains;
 	uint32_t new_grains_per_second;
 	float grain_gen_radius;
-	float color_speed_scale;
-	vec4 color1, color2; // color1 = color of still grain, color2 = color of grain moving at color_speed_scale m/s
+	float color_scale;
+	vec4 color1, color2; // color1 = color of still grain, color2 = color of grain moving at 1/color_scale m/s
 	GLProgram grain_program, update_program;
 	GLVBO update_vbo, grain_vbo;
 	GLVAO update_vao, grain_vao;
@@ -46,19 +46,15 @@ static void APIENTRY gl_message_callback(GLenum source, GLenum type, unsigned in
 
 static GLuint g_grain_vshader, g_update_vshader;
 
-static void function_create(Function *f, const char *wind_formula) {
+static void function_init(Function *f, const char *wind_formula, uint32_t ngrains) {
+	memset(f, 0, sizeof *f);
 	{
 		GLuint tex[2] = {0};
 		gl.GenTextures(2, tex);
 		f->grains_tex1 = tex[0];
 		f->grains_tex2 = tex[1];
 	}
-	f->color_speed_scale = 10;
-	f->ngrains = 500000;
-	f->new_grains_per_second = 1000;
-	f->grain_gen_radius = 2;
-	f->color1 = Vec4(1.0f,0.8f,.6f,1);
-	f->color2 = Vec4(1.0f,0,0,1);
+	f->ngrains = ngrains;
 	{
 
 		static char fshader_code[65536];
@@ -85,10 +81,10 @@ static void function_create(Function *f, const char *wind_formula) {
 			"  } else {\n"
 			"    int src_pixel_idx = pixel_idx - u_new_grains_per_second;\n"
 			"    ivec2 src_pixel = ivec2(src_pixel_idx & 1023, src_pixel_idx >> 10);\n"
-			"    vec3 prev_pos = texelFetch(u_tex, src_pixel, 0).xyz;\n"
-			"    float x = prev_pos.x, y = prev_pos.y, z = prev_pos.z;\n"
-			"    vec3 wind = vec3(%s);\n"
-			"    vec3 new_pos = prev_pos + wind * u_dt;\n"
+			"    vec3 p = texelFetch(u_tex, src_pixel, 0).xyz;\n"
+			"    float x = p.x, y = p.y, z = p.z;\n"
+			"    vec3 wind = %s;\n"
+			"    vec3 new_pos = p + wind * u_dt;\n"
 			"    gl_FragColor = vec4(new_pos, 0.0);\n"
 			"  }\n"
 			"}\n",
@@ -113,14 +109,15 @@ static void function_create(Function *f, const char *wind_formula) {
 		static char fshader_code[65536];
 		strbuf_print(fshader_code,
 			"uniform vec4 u_color1, u_color2;\n"
+			"uniform float u_color_scale;\n"
 			"varying vec3 pos;\n"
 			"void main() {\n"
-			"  float x = pos.x, y = pos.y, z = pos.z;\n"
-			"  float wind_speed = length(vec3(%s));\n"
-			"  gl_FragColor = mix(u_color1, u_color2, clamp(wind_speed * %f, 0.0, 1.0));\n"
+			"  vec3 p = pos;\n"
+			"  float x = p.x, y = p.y, z = p.z;\n"
+			"  float wind_speed = length(%s);\n"
+			"  gl_FragColor = mix(u_color1, u_color2, clamp(wind_speed * u_color_scale, 0.0, 1.0));\n"
 			"}\n",
-			wind_formula,
-			f->color_speed_scale == 0 ? 1 : 1.0f / f->color_speed_scale
+			wind_formula
 		);
 		GLuint fshader = V_gl_shader_compile_code("grainf.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
 		GLint status = 0;
@@ -203,6 +200,95 @@ static void function_create(Function *f, const char *wind_formula) {
 	gl.GenFramebuffers(1, &f->fbo);
 }
 
+static Function *sandbox_create(const char *filename) {
+	Function *functions = NULL;
+	FILE *fp = fopen(filename, "r");
+	if (fp) {
+		int line_number = 0;
+		uint32_t ngrains = 100000;
+		float grain_refresh_rate = 0.01f;
+		float grain_gen_radius = 2;
+		vec4 color1 = Vec4(1.0f,0.8f,.6f,1);
+		vec4 color2 = Vec4(1.0f,0,0,1);
+		float color_scale = 0;
+		char line[1024];
+		while (fgets(line, sizeof line, fp)) {
+			++line_number;
+		#define error(...) do {\
+			char _buf1[256], _buf2[256];\
+			strbuf_print(_buf1, __VA_ARGS__);\
+			strbuf_print(_buf2, "%s line %d: %s", filename, line_number, _buf1);\
+			window_message_box_error("Error loading sandbox", _buf2);\
+			exit(-1);\
+		} while (0)
+
+			line[strcspn(line, "\r\n")] = '\0';
+			if (line[0] == '#' || line[0] == '\0') break;
+
+			char *command = line;
+			char *args = strchr(command, ' ');
+			if (args) {
+				*args++ = '\0';
+				while (isspace(*args)) ++args;
+			} else {
+				args = command + strlen(command);
+			}
+			if (strcmp(command, "add") == 0) {
+				Function *f = arr_addp(functions);
+				function_init(f, args, ngrains);
+				uint32_t nnew = (uint32_t)(grain_refresh_rate * (float)ngrains);
+				f->new_grains_per_second = nnew == 0 ? 1 : nnew;
+				f->grain_gen_radius = grain_gen_radius;
+				f->color_scale = color_scale;
+				f->color1 = color1;
+				f->color2 = color2;
+			} else if (strcmp(command, "grains") == 0) {
+				ngrains = (unsigned)atoi(args);
+				if (ngrains == 0 || ngrains > 1000000000) {
+					error("Invalid number of grains: '%s'.", args);
+				}
+			} else if (strcmp(command, "grain_refresh_rate") == 0) {
+				char *endptr = 0;
+				double d = strtod(args, &endptr);
+				if (*args == '\0' || *endptr != '\0' || d < 0.0 || d > 0.5)
+					error("Invalid grain refresh rate: '%s' (should be from 0 to 0.5).", args);
+				else
+					grain_refresh_rate = (float)d;
+			} else if (strcmp(command, "start_radius") == 0) {
+				char *endptr = 0;
+				double d = strtod(args, &endptr);
+				if (*args == '\0' || *endptr != '\0' || d <= 0.0 || d > 1000)
+					error("Invalid start radius: '%s'.", args);
+				else
+					grain_gen_radius = (float)d;
+			} else if (strcmp(command, "color") == 0 || strcmp(command, "colour") == 0) {
+				uint r=0, g=0, b=0;
+				if (sscanf(args, "#%02x%02x%02x", &r, &g, &b) == 3 && r < 256 && g < 256 && b < 256)
+					color1 = scale4(Vec4((float)r,(float)g,(float)b,255), 1.0f/255.0f);
+				else
+					error("Invalid color: '%s'.", args);
+			} else if (strcmp(command, "color_scale") == 0 || strcmp(command, "colour_scale") == 0) {
+				char *endptr = 0;
+				double d = strtod(args, &endptr);
+				if (*args == '\0' || *endptr != '\0' || d < 0.0 || d > 1000)
+					error("Invalid color scale: '%s'.", args);
+				else
+					color_scale = (float)d;
+			} else if (strcmp(command, "color2") == 0 || strcmp(command, "colour2") == 0) {
+				uint r=0, g=0, b=0;
+				if (sscanf(args, "#%02x%02x%02x", &r, &g, &b) == 3 && r < 256 && g < 256 && b < 256)
+					color2 = scale4(Vec4((float)r,(float)g,(float)b,255), 1.0f/255.0f);
+				else
+					error("Invalid color: '%s'.", args);
+			} else {
+				error("Command not recognized: '%s'.", command);
+			}
+		}
+		fclose(fp);
+	}
+	return functions;
+}
+
 int main(int argc, char **argv) {
 	if (!window_create("sandbox", 1280, 720, 0)) {
 		return -1;
@@ -213,7 +299,6 @@ int main(int argc, char **argv) {
 	}
 
 	Player player_data = {0}, *player = &player_data;
-	Function *functions = NULL;
 
 
 	window_set_relative_mouse(1);
@@ -242,15 +327,7 @@ int main(int argc, char **argv) {
 		g_grain_vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 	}
 
-	{
-		Function *f = arr_addp(functions);
-		function_create(f,  "y * y * tan(z), z * z, -x * x");
-	}{
-		Function *f = arr_addp(functions);
-		function_create(f,  "-y * y * tan(z), -z * z, x * x");
-	}
-
-
+	Function *functions = sandbox_create("sandboxes/test.txt");
 
 	bool fullscreen = false;
 
@@ -265,9 +342,6 @@ int main(int argc, char **argv) {
 				goto quit;
 			case SDL_KEYDOWN:
 				switch (event.key.keysym.sym) {
-				case SDLK_z:
-					g_wireframe = !g_wireframe;
-					break;
 				case SDLK_F11:
 					fullscreen = !fullscreen;
 					window_set_fullscreen(fullscreen);
@@ -288,21 +362,21 @@ int main(int argc, char **argv) {
 		
 		{
 			int dx = (window_is_key_down(KEY_D) || window_is_key_down(KEY_RIGHT)) - (window_is_key_down(KEY_A) || window_is_key_down(KEY_LEFT));
-			int dy = window_is_key_down(KEY_PAGEUP) - window_is_key_down(KEY_PAGEDOWN);
+			int dy = (window_is_key_down(KEY_PAGEUP) || window_is_key_down(KEY_Q)) - (window_is_key_down(KEY_PAGEDOWN) || window_is_key_down(KEY_E));
 			int dz = (window_is_key_down(KEY_S) || window_is_key_down(KEY_DOWN)) - (window_is_key_down(KEY_W) || window_is_key_down(KEY_UP));
 			if (dx || dy || dz) {
 				const float player_speed = 3;
 				vec3 dp = scale3(normalize3(Vec3((float)dx, (float)dy, (float)dz)), player_speed * dt);
+				mat3 pitch = mat3_pitch(player->pitch);
 				mat3 yaw = mat3_yaw(player->yaw);
-				dp = transform3(&yaw, dp);
+				mat3 rot = mat3_mul(&yaw, &pitch);
+				dp = transform3(&rot, dp);
 				player->pos = add3(player->pos, dp);
 			}
 		}
 
 
-		gl.PolygonMode(GL_FRONT_AND_BACK, g_wireframe ? GL_LINE : GL_FILL);
-		if (!g_wireframe)
-			gl.Enable(GL_DEPTH_TEST);
+		gl.Enable(GL_DEPTH_TEST);
 		
 
 		arr_foreachp(functions, Function, f) {
@@ -334,6 +408,7 @@ int main(int argc, char **argv) {
 			gl_uniformM4(&f->grain_program, "u_transform", &g_camera);
 			gl_uniform4f(&f->grain_program, "u_color1", f->color1);
 			gl_uniform4f(&f->grain_program, "u_color2", f->color2);
+			gl_uniform1f(&f->grain_program, "u_color_scale", f->color_scale);
 			gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
 			gl.ActiveTexture(GL_TEXTURE0);
 			gl_uniform1i(&f->grain_program, "u_offset_tex", 0);
