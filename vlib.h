@@ -63,6 +63,10 @@ extern "C" {
 #define V_VARDECL static
 #endif
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <inttypes.h>
@@ -74,6 +78,7 @@ extern "C" {
 #include <time.h>
 #include <errno.h>
 #include <signal.h>
+#include <limits.h>
 
 // what the fuck is wrong with you microsoft
 #ifdef min
@@ -121,6 +126,7 @@ void OutputDebugStringA(const char *);
 	_Pragma("GCC diagnostic ignored \"-Wunused-parameter\"") \
 	_Pragma("GCC diagnostic ignored \"-Wsign-compare\"") \
 	_Pragma("GCC diagnostic ignored \"-Wpedantic\"") \
+	_Pragma("GCC diagnostic ignored \"-Wimplicit-fallthrough\"") \
 	_Pragma("GCC diagnostic ignored \"-Wshadow\"")
 #define NO_WARN_END \
 	_Pragma("GCC diagnostic pop")
@@ -4280,7 +4286,7 @@ static void arr_reserve_(void **arr, size_t member_size, size_t n) {
 			// increase capacity of array
 			ArrHeader *hdr = arr_hdr_(*arr);
 			ArrHeader *old_hdr = hdr;
-			if (old_hdr->len > n) old_hdr->len = (uint32_t)n;
+			if (old_hdr->cap >= n) return;
 			hdr = (ArrHeader *)realloc(hdr, sizeof(ArrHeader) + n * member_size);
 			if (hdr) {
 				hdr->cap = (uint32_t)n;
@@ -10920,7 +10926,9 @@ V_DECL vec4 gen_rand_unit_vec4(Generator *g) {
 }
 
 #if V_GL
+NO_WARN_START
 #include <SDL.h>
+NO_WARN_END
 
 static SDL_Window *V_sdl_window;
 static char V_window_error[2048];
