@@ -12540,6 +12540,13 @@ V_DECL void gl_text_set(GLText *text, const char *str) {
 		float x = 0, y = 0;
 		for (i = 0; i < len; ++i) {
 			char c = str[i];
+			unsigned char uc = (unsigned char)c;
+			if (uc > static_arr_len(text_positions)) {
+				if (unicode_is_start_of_code_point(uc))
+					c = '?'; // one question mark per non-ASCII UTF-8 codepoint
+				else
+					continue;
+			}
 			if (c == '\n') {
 				x = 0;
 				y -= 1;
