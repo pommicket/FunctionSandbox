@@ -1,5 +1,4 @@
 // @TODO:
-//  - auto-reload config file
 //  - config selection menu
 //  - optional opacity (color1,2 can have alpha)
 #define V_GL 1
@@ -289,6 +288,21 @@ static Function *sandbox_create(const char *filename) {
 	return functions;
 }
 
+static void sandbox_clear(Function **fs) {
+	arr_foreachp(*fs, Function, f) {
+		gl_vbo_delete(&f->update_vbo);
+		gl_vbo_delete(&f->grain_vbo);
+		gl_vao_delete(&f->update_vao);
+		gl_vao_delete(&f->grain_vao);
+		gl.DeleteFramebuffers(1, &f->fbo);
+		GLuint tex[2] = {f->grains_tex1, f->grains_tex2};
+		gl.DeleteTextures(2, tex);
+		gl.DeleteProgram(f->update_program.id);
+		gl.DeleteProgram(f->grain_program.id);
+	}
+	arr_clear(*fs);
+}
+
 int main(int argc, char **argv) {
 	if (!window_create("sandbox", 1280, 720, 0)) {
 		return -1;
@@ -327,7 +341,9 @@ int main(int argc, char **argv) {
 		g_grain_vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 	}
 
-	Function *functions = sandbox_create("sandboxes/test.txt");
+	const char *config_filename = "sandboxes/test.txt";
+	Time config_last_modified = {0};
+	Function *functions = NULL;
 
 	bool fullscreen = false;
 
@@ -335,6 +351,13 @@ int main(int argc, char **argv) {
 		SDL_Event event = {0};
 
 		float dt = window_frame();
+
+		if (!time_eq(fs_last_modified(config_filename), config_last_modified)) {
+			sleep_ms(10); // wait a bit to make sure whatever's writing here is done
+			sandbox_clear(&functions);
+			functions = sandbox_create(config_filename);
+			config_last_modified = fs_last_modified(config_filename);
+		}
 
 		while (SDL_PollEvent(&event)) {
 			switch (event.type) {

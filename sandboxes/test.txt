@@ -4,5 +4,5 @@ color   #0000ff
 color2  #ff00ff
 color_scale 0.5
 add vec3(-z, 0.0, x)
-color2  #00ff00
+color2  #ffff00
 add vec3(-y, x, 0.0)
