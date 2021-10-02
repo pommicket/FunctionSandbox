@@ -7,6 +7,14 @@
 
 static mat4 g_camera;
 static bool g_wireframe;
+static const uint32_t tex_width = 1024;
+
+typedef struct {
+	vec3 pos;
+} UnlitVertex;
+typedef struct {
+	vec2 pos;
+} UpdateVertex;
 
 typedef struct {
 	GLuint grains_tex1, grains_tex2;
@@ -16,6 +24,10 @@ typedef struct {
 	float grain_gen_radius;
 	float color_speed_scale;
 	vec4 color1, color2; // color1 = color of still grain, color2 = color of grain moving at color_speed_scale m/s
+	GLProgram grain_program, update_program;
+	GLVBO update_vbo, grain_vbo;
+	GLVAO update_vao, grain_vao;
+	uint32_t tex_height;
 } Function;
 
 typedef struct {
@@ -32,33 +44,22 @@ static void APIENTRY gl_message_callback(GLenum source, GLenum type, unsigned in
 		debug_print("Message from OpenGL: %s.\n", message);
 }
 
-int main(int argc, char **argv) {
-	if (!window_create("sandbox", 1280, 720, 0)) {
-		return -1;
-	}
-	if (gl_version_major * 100 + gl_version_minor < 310) {
-		window_message_box_error("Error", "Couldn't get OpenGL 3.1 context (your graphics drivers are too old).");
-		return -1;
-	}
+static GLuint g_grain_vshader, g_update_vshader;
 
-	Player player_data = {0}, *player = &player_data;
-	Function f_data = {0}, *f = &f_data;
-
-	typedef struct {
-		vec3 pos;
-	} UnlitVertex;
-	typedef struct {
-		vec2 pos;
-	} UpdateVertex;
-
-	GLProgram update_program = {0}, grain_program = {0};
-	const char *wind_formula = "y * y * tan(z), z * z, -x * x";
+static void function_create(Function *f, const char *wind_formula) {
 	{
-		const char *vshader_code =
-			"attribute vec2 v_pos;\n"
-			"void main() {\n"
-			"  gl_Position = vec4(v_pos, 0.0, 1.0);\n"
-			"}\n";
+		GLuint tex[2] = {0};
+		gl.GenTextures(2, tex);
+		f->grains_tex1 = tex[0];
+		f->grains_tex2 = tex[1];
+	}
+	f->color_speed_scale = 10;
+	f->ngrains = 500000;
+	f->new_grains_per_second = 1000;
+	f->grain_gen_radius = 2;
+	f->color1 = Vec4(1.0f,0.8f,.6f,1);
+	f->color2 = Vec4(1.0f,0,0,1);
+	{
 
 		static char fshader_code[65536];
 		strbuf_print(fshader_code,
@@ -94,33 +95,21 @@ int main(int argc, char **argv) {
 			wind_formula
 		);
 
-		GLuint vshader = V_gl_shader_compile_code("updatev.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 		GLuint fshader = V_gl_shader_compile_code("updatef.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
 		GLint status = 0;
 		GLuint prog = gl.CreateProgram();
-		gl.AttachShader(prog, vshader);
+		gl.AttachShader(prog, g_update_vshader);
 		gl.AttachShader(prog, fshader);
 		gl.LinkProgram(prog);
 		gl.GetProgramiv(prog, GL_LINK_STATUS, &status);
-		gl.DetachShader(prog, vshader);
+		gl.DetachShader(prog, g_update_vshader);
 		gl.DetachShader(prog, fshader);
+		gl.DeleteShader(fshader);
 		assert(status);
-		update_program.id = prog;
+		f->update_program.id = prog;
 	}
 
-	f->color_speed_scale = 10;
 	{
-		const char *vshader_code =
-			"attribute vec3 v_pos;\n"
-			"uniform mat4 u_transform;\n"
-			"uniform sampler2D u_offset_tex;\n"
-			"varying vec3 pos;\n"
-			"void main() {\n"
-			"  ivec2 texel_pos = ivec2(gl_InstanceID & 1023, gl_InstanceID >> 10);\n"
-			"  vec3 offset = texelFetch(u_offset_tex, texel_pos, 0).xyz;\n"
-			"  gl_Position = u_transform * vec4(v_pos + offset, 1.0);\n"
-			"  pos = v_pos + offset;\n"
-			"}\n";
 		static char fshader_code[65536];
 		strbuf_print(fshader_code,
 			"uniform vec4 u_color1, u_color2;\n"
@@ -133,23 +122,21 @@ int main(int argc, char **argv) {
 			wind_formula,
 			f->color_speed_scale == 0 ? 1 : 1.0f / f->color_speed_scale
 		);
-		GLuint vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 		GLuint fshader = V_gl_shader_compile_code("grainf.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
 		GLint status = 0;
 		GLuint prog = gl.CreateProgram();
-		gl.AttachShader(prog, vshader);
+		gl.AttachShader(prog, g_grain_vshader);
 		gl.AttachShader(prog, fshader);
 		gl.LinkProgram(prog);
 		gl.GetProgramiv(prog, GL_LINK_STATUS, &status);
-		gl.DetachShader(prog, vshader);
+		gl.DetachShader(prog, g_grain_vshader);
 		gl.DetachShader(prog, fshader);
+		gl.DeleteShader(fshader);
 		assert(status);
-		grain_program.id = prog;
+		f->grain_program.id = prog;
 	}
-
-
-	GLVBO update_vbo = gl_vbo_new(UpdateVertex, "update");
-	GLVAO update_vao = gl_vao_new(&update_program, "update");
+	f->update_vbo = gl_vbo_new(UpdateVertex, "update");
+	f->update_vao = gl_vao_new(&f->update_program, "update");
 	{
 		UpdateVertex vertices[] = {
 			{-1,-1},
@@ -159,12 +146,12 @@ int main(int argc, char **argv) {
 			{+1,+1},
 			{-1,+1}
 		};
-		gl_vbo_set_static_data(&update_vbo, vertices, static_arr_len(vertices));
-		gl_vao_add_data2f(&update_vao, update_vbo, "v_pos", UpdateVertex, pos);
+		gl_vbo_set_static_data(&f->update_vbo, vertices, static_arr_len(vertices));
+		gl_vao_add_data2f(&f->update_vao, f->update_vbo, "v_pos", UpdateVertex, pos);
 	}
 
-	GLVBO grain_vbo = gl_vbo_new(UnlitVertex, "grain");
-	GLVAO grain_vao = gl_vao_new(&grain_program, "grain");
+	f->grain_vbo = gl_vbo_new(UnlitVertex, "grain");
+	f->grain_vao = gl_vao_new(&f->grain_program, "grain");
 	{
 		float h = 0.005f;
 		float S3 = 0.57735026919f; // sqrt(1/3)
@@ -176,37 +163,22 @@ int main(int argc, char **argv) {
 			{0,-h*.5f,-h*S3},
 			{0,-h*.5f,+h*S3},
 		};
-		gl_vbo_set_static_data(&grain_vbo, vertices, static_arr_len(vertices));
-		gl_vao_add_data3f(&grain_vao, grain_vbo, "v_pos", UnlitVertex, pos);
+		gl_vbo_set_static_data(&f->grain_vbo, vertices, static_arr_len(vertices));
+		gl_vao_add_data3f(&f->grain_vao, f->grain_vbo, "v_pos", UnlitVertex, pos);
 	}
 
-
-	window_set_relative_mouse(1);
-
-	{
-		GLuint tex[2] = {0};
-		gl.GenTextures(2, tex);
-		f->grains_tex1 = tex[0];
-		f->grains_tex2 = tex[1];
-	}
-	f->ngrains = 1000000;
-	f->new_grains_per_second = 1000;
-	f->grain_gen_radius = 2;
-	f->color1 = Vec4(1.0f,0.8f,.6f,1);
-	f->color2 = Vec4(1.0f,0,0,1);
-
-	const uint32_t tex_width = 1024;
 	uint32_t tex_chunk_size = tex_width * 4; // height must be a multiple of 4
 	uint32_t tex_area = ((f->ngrains + tex_chunk_size-1) / tex_chunk_size) * tex_chunk_size; // width * height of grain pos texture
 	if (tex_area < tex_chunk_size) tex_area = tex_chunk_size;
 	uint32_t tex_height = tex_area / tex_width;
+	f->tex_height = tex_height;
 
 	{
 		size_t ndata = (size_t)((f->ngrains + tex_chunk_size - 1) / tex_chunk_size) * tex_chunk_size;
 		vec3 *data = calloc(ndata, sizeof *data); // required to initialize textures to NAN
 		if (!data) {
 			window_message_box_error("Out of memory", "Not enough memory for grains. Try reducing the max number of grains.");
-			return -1;
+			exit(-1);
 		}
 		for (int i = 0; i < ndata; ++i) {
 			data[i] = Vec3(NAN, NAN, NAN);
@@ -227,10 +199,58 @@ int main(int argc, char **argv) {
 		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		
 		free(data);
+	}
+	gl.GenFramebuffers(1, &f->fbo);
+}
 
+int main(int argc, char **argv) {
+	if (!window_create("sandbox", 1280, 720, 0)) {
+		return -1;
+	}
+	if (gl_version_major * 100 + gl_version_minor < 310) {
+		window_message_box_error("Error", "Couldn't get OpenGL 3.1 context (your graphics drivers are too old).");
+		return -1;
 	}
 
-	gl.GenFramebuffers(1, &f->fbo);
+	Player player_data = {0}, *player = &player_data;
+	Function *functions = NULL;
+
+
+	window_set_relative_mouse(1);
+
+	// global shader programs
+	{
+		const char *vshader_code =
+			"attribute vec2 v_pos;\n"
+			"void main() {\n"
+			"  gl_Position = vec4(v_pos, 0.0, 1.0);\n"
+			"}\n";
+		g_update_vshader = V_gl_shader_compile_code("updatev.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
+	}
+	{
+		const char *vshader_code =
+			"attribute vec3 v_pos;\n"
+			"uniform mat4 u_transform;\n"
+			"uniform sampler2D u_offset_tex;\n"
+			"varying vec3 pos;\n"
+			"void main() {\n"
+			"  ivec2 texel_pos = ivec2(gl_InstanceID & 1023, gl_InstanceID >> 10);\n"
+			"  vec3 offset = texelFetch(u_offset_tex, texel_pos, 0).xyz;\n"
+			"  gl_Position = u_transform * vec4(v_pos + offset, 1.0);\n"
+			"  pos = v_pos + offset;\n"
+			"}\n";
+		g_grain_vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
+	}
+
+	{
+		Function *f = arr_addp(functions);
+		function_create(f,  "y * y * tan(z), z * z, -x * x");
+	}{
+		Function *f = arr_addp(functions);
+		function_create(f,  "-y * y * tan(z), -z * z, x * x");
+	}
+
+
 
 	bool fullscreen = false;
 
@@ -285,19 +305,19 @@ int main(int argc, char **argv) {
 			gl.Enable(GL_DEPTH_TEST);
 		
 
-		{
-			gl.Viewport(0,0,(GLsizei)tex_width,(GLsizei)tex_height);
+		arr_foreachp(functions, Function, f) {
+			gl.Viewport(0,0,(GLsizei)tex_width,(GLsizei)f->tex_height);
 			gl.BindFramebuffer(GL_FRAMEBUFFER, f->fbo);
 			gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->grains_tex2, 0);
-			gl_program_use(&update_program);
+			gl_program_use(&f->update_program);
 			gl.ActiveTexture(GL_TEXTURE0);
 			gl.BindTexture(GL_TEXTURE_2D, f->grains_tex1);
-			gl_uniform1i(&update_program, "u_tex", 0);
-			gl_uniform1i(&update_program, "u_new_grains_per_second", (GLint)f->new_grains_per_second);
-			gl_uniform1f(&update_program, "u_dt", dt);
-			gl_uniform1f(&update_program, "u_rand_seed", randf());
-			gl_uniform1f(&update_program, "u_grain_gen_radius", f->grain_gen_radius);
-			gl_vao_render(update_vao, NULL);
+			gl_uniform1i(&f->update_program, "u_tex", 0);
+			gl_uniform1i(&f->update_program, "u_new_grains_per_second", (GLint)f->new_grains_per_second);
+			gl_uniform1f(&f->update_program, "u_dt", dt);
+			gl_uniform1f(&f->update_program, "u_rand_seed", randf());
+			gl_uniform1f(&f->update_program, "u_grain_gen_radius", f->grain_gen_radius);
+			gl_vao_render(f->update_vao, NULL);
 		}
 
 		gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -309,24 +329,24 @@ int main(int argc, char **argv) {
 			vec3 p = player->pos;
 			g_camera = mat4_camera(p, player->yaw, player->pitch, degree2rad(45), 1, 50);
 		}
-		gl_program_use(&grain_program);
-		gl_uniformM4(&grain_program, "u_transform", &g_camera);
-		gl_uniform4f(&grain_program, "u_color1", f->color1);
-		gl_uniform4f(&grain_program, "u_color2", f->color2);
-		gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
-		gl.ActiveTexture(GL_TEXTURE0);
+		arr_foreachp(functions, Function, f) {
+			gl_program_use(&f->grain_program);
+			gl_uniformM4(&f->grain_program, "u_transform", &g_camera);
+			gl_uniform4f(&f->grain_program, "u_color1", f->color1);
+			gl_uniform4f(&f->grain_program, "u_color2", f->color2);
+			gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
+			gl.ActiveTexture(GL_TEXTURE0);
+			gl_uniform1i(&f->grain_program, "u_offset_tex", 0);
+			gl.BindVertexArray(f->grain_vao.id);
+			gl.DrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)f->ngrains);
 
-		gl_uniform1i(&grain_program, "u_offset_tex", 0);
-		
-		
-		gl.BindVertexArray(grain_vao.id);
-		gl.DrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)f->ngrains);
-
-		{ // swap "front and back" grain textures
-			GLuint temp = f->grains_tex1;
-			f->grains_tex1 = f->grains_tex2;
-			f->grains_tex2 = temp;
+			{ // swap "front and back" grain textures
+				GLuint temp = f->grains_tex1;
+				f->grains_tex1 = f->grains_tex2;
+				f->grains_tex2 = temp;
+			}
 		}
+		
 
 	}
 	
