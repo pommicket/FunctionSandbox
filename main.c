@@ -5,7 +5,6 @@
 #define V_WINDOWED 1
 #include "vlib.h"
 
-static GLProgram *program_grain;
 static mat4 g_camera;
 static bool g_wireframe;
 
@@ -15,7 +14,8 @@ typedef struct {
 	uint32_t ngrains;
 	uint32_t new_grains_per_second;
 	float grain_gen_radius;
-	vec4 color;
+	float color_speed_scale;
+	vec4 color1, color2; // color1 = color of still grain, color2 = color of grain moving at color_speed_scale m/s
 } Function;
 
 typedef struct {
@@ -44,7 +44,6 @@ int main(int argc, char **argv) {
 	Player player_data = {0}, *player = &player_data;
 	Function f_data = {0}, *f = &f_data;
 
-	program_grain = gl_program_new("grainv.glsl", "grainf.glsl");
 	typedef struct {
 		vec3 pos;
 	} UnlitVertex;
@@ -52,24 +51,8 @@ int main(int argc, char **argv) {
 		vec2 pos;
 	} UpdateVertex;
 
-	GLVBO grain_vbo = gl_vbo_new(UnlitVertex, "grain");
-	GLVAO grain_vao = gl_vao_new(program_grain, "grain");
-	{
-		float h = 0.005f;
-		float S3 = 0.57735026919f; // sqrt(1/3)
-		UnlitVertex vertices[] = {
-			{0,h*.5f,0},
-			{-h*S3,-h*.5f,0},
-			{+h*S3,-h*.5f,0},
-			{0,h*.5f,0},
-			{0,-h*.5f,-h*S3},
-			{0,-h*.5f,+h*S3},
-		};
-		gl_vbo_set_static_data(&grain_vbo, vertices, static_arr_len(vertices));
-		gl_vao_add_data3f(&grain_vao, grain_vbo, "v_pos", UnlitVertex, pos);
-	}
-
-	GLProgram update_program = {0};
+	GLProgram update_program = {0}, grain_program = {0};
+	const char *wind_formula = "y * y * tan(z), z * z, -x * x";
 	{
 		const char *vshader_code =
 			"attribute vec2 v_pos;\n"
@@ -77,7 +60,8 @@ int main(int argc, char **argv) {
 			"  gl_Position = vec4(v_pos, 0.0, 1.0);\n"
 			"}\n";
 
-		const char *fshader_code =
+		static char fshader_code[65536];
+		strbuf_print(fshader_code,
 			"uniform sampler2D u_tex;\n"
 			"uniform float u_dt;\n"
 			"uniform int u_new_grains_per_second;\n"
@@ -102,16 +86,18 @@ int main(int argc, char **argv) {
 			"    ivec2 src_pixel = ivec2(src_pixel_idx & 1023, src_pixel_idx >> 10);\n"
 			"    vec3 prev_pos = texelFetch(u_tex, src_pixel, 0).xyz;\n"
 			"    float x = prev_pos.x, y = prev_pos.y, z = prev_pos.z;\n"
-			"    vec3 wind = vec3(-tan(y)*x, cos(z)*y, sin(z)*x);\n"
+			"    vec3 wind = vec3(%s);\n"
 			"    vec3 new_pos = prev_pos + wind * u_dt;\n"
 			"    gl_FragColor = vec4(new_pos, 0.0);\n"
 			"  }\n"
-			"}\n";
+			"}\n",
+			wind_formula
+		);
 
 		GLuint vshader = V_gl_shader_compile_code("updatev.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 		GLuint fshader = V_gl_shader_compile_code("updatef.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
 		GLint status = 0;
-		GLuint prog = V_gl_text_shader.id = gl.CreateProgram();
+		GLuint prog = gl.CreateProgram();
 		gl.AttachShader(prog, vshader);
 		gl.AttachShader(prog, fshader);
 		gl.LinkProgram(prog);
@@ -120,6 +106,45 @@ int main(int argc, char **argv) {
 		gl.DetachShader(prog, fshader);
 		assert(status);
 		update_program.id = prog;
+	}
+
+	f->color_speed_scale = 10;
+	{
+		const char *vshader_code =
+			"attribute vec3 v_pos;\n"
+			"uniform mat4 u_transform;\n"
+			"uniform sampler2D u_offset_tex;\n"
+			"varying vec3 pos;\n"
+			"void main() {\n"
+			"  ivec2 texel_pos = ivec2(gl_InstanceID & 1023, gl_InstanceID >> 10);\n"
+			"  vec3 offset = texelFetch(u_offset_tex, texel_pos, 0).xyz;\n"
+			"  gl_Position = u_transform * vec4(v_pos + offset, 1.0);\n"
+			"  pos = v_pos + offset;\n"
+			"}\n";
+		static char fshader_code[65536];
+		strbuf_print(fshader_code,
+			"uniform vec4 u_color1, u_color2;\n"
+			"varying vec3 pos;\n"
+			"void main() {\n"
+			"  float x = pos.x, y = pos.y, z = pos.z;\n"
+			"  float wind_speed = length(vec3(%s));\n"
+			"  gl_FragColor = mix(u_color1, u_color2, clamp(wind_speed * %f, 0.0, 1.0));\n"
+			"}\n",
+			wind_formula,
+			f->color_speed_scale == 0 ? 1 : 1.0f / f->color_speed_scale
+		);
+		GLuint vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
+		GLuint fshader = V_gl_shader_compile_code("grainf.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
+		GLint status = 0;
+		GLuint prog = gl.CreateProgram();
+		gl.AttachShader(prog, vshader);
+		gl.AttachShader(prog, fshader);
+		gl.LinkProgram(prog);
+		gl.GetProgramiv(prog, GL_LINK_STATUS, &status);
+		gl.DetachShader(prog, vshader);
+		gl.DetachShader(prog, fshader);
+		assert(status);
+		grain_program.id = prog;
 	}
 
 
@@ -138,6 +163,24 @@ int main(int argc, char **argv) {
 		gl_vao_add_data2f(&update_vao, update_vbo, "v_pos", UpdateVertex, pos);
 	}
 
+	GLVBO grain_vbo = gl_vbo_new(UnlitVertex, "grain");
+	GLVAO grain_vao = gl_vao_new(&grain_program, "grain");
+	{
+		float h = 0.005f;
+		float S3 = 0.57735026919f; // sqrt(1/3)
+		UnlitVertex vertices[] = {
+			{0,h*.5f,0},
+			{-h*S3,-h*.5f,0},
+			{+h*S3,-h*.5f,0},
+			{0,h*.5f,0},
+			{0,-h*.5f,-h*S3},
+			{0,-h*.5f,+h*S3},
+		};
+		gl_vbo_set_static_data(&grain_vbo, vertices, static_arr_len(vertices));
+		gl_vao_add_data3f(&grain_vao, grain_vbo, "v_pos", UnlitVertex, pos);
+	}
+
+
 	window_set_relative_mouse(1);
 
 	{
@@ -146,10 +189,11 @@ int main(int argc, char **argv) {
 		f->grains_tex1 = tex[0];
 		f->grains_tex2 = tex[1];
 	}
-	f->ngrains = 100000;
-	f->new_grains_per_second = 10000;
+	f->ngrains = 1000000;
+	f->new_grains_per_second = 1000;
 	f->grain_gen_radius = 2;
-	f->color = Vec4(1.0f,0.8f,.6f,1);
+	f->color1 = Vec4(1.0f,0.8f,.6f,1);
+	f->color2 = Vec4(1.0f,0,0,1);
 
 	const uint32_t tex_width = 1024;
 	uint32_t tex_chunk_size = tex_width * 4; // height must be a multiple of 4
@@ -265,13 +309,14 @@ int main(int argc, char **argv) {
 			vec3 p = player->pos;
 			g_camera = mat4_camera(p, player->yaw, player->pitch, degree2rad(45), 1, 50);
 		}
-		gl_program_use(program_grain);
-		gl_uniformM4(program_grain, "u_transform", &g_camera);
-		gl_uniform4f(program_grain, "u_color", f->color);
+		gl_program_use(&grain_program);
+		gl_uniformM4(&grain_program, "u_transform", &g_camera);
+		gl_uniform4f(&grain_program, "u_color1", f->color1);
+		gl_uniform4f(&grain_program, "u_color2", f->color2);
 		gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
 		gl.ActiveTexture(GL_TEXTURE0);
 
-		gl_uniform1i(program_grain, "u_offset_tex", 0);
+		gl_uniform1i(&grain_program, "u_offset_tex", 0);
 		
 		
 		gl.BindVertexArray(grain_vao.id);
