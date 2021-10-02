@@ -1,6 +1,17 @@
 // @TODO:
-//  - config selection menu
-//  - optional opacity (color1,2 can have alpha)
+//  - configurable:
+//     - fov
+//     - far/near clipping plane
+//     - "player" speed
+//  - nice examples with comments
+//  - readme
+/*
+Anyone is free to modify/distribute/use/sell/etc
+this software for any purpose by any means.
+Any copyright protections are relinquished by the author(s).
+This software is provided "as is", without any warranty.
+The author(s) shall not be held liable in connection with this software.
+*/
 #define V_GL 1
 #define V_WINDOWED 1
 #include "vlib.h"
@@ -341,22 +352,65 @@ int main(int argc, char **argv) {
 		g_grain_vshader = V_gl_shader_compile_code("grainv.glsl", NULL, vshader_code, GL_VERTEX_SHADER);
 	}
 
-	const char *config_filename = "sandboxes/test.txt";
+	GLText menu_text = {0};
+	size_t menu_sel = 0;
+	char config_name[256] = {0};
 	Time config_last_modified = {0};
 	Function *functions = NULL;
 
 	bool fullscreen = false;
 
 	while (1) {
+	top:;
+
 		SDL_Event event = {0};
 
 		float dt = window_frame();
 
-		if (!time_eq(fs_last_modified(config_filename), config_last_modified)) {
-			sleep_ms(10); // wait a bit to make sure whatever's writing here is done
-			sandbox_clear(&functions);
-			functions = sandbox_create(config_filename);
-			config_last_modified = fs_last_modified(config_filename);
+		if (*config_name) {
+			char filename[512];
+			strbuf_print(filename, "sandboxes/%s.txt", config_name);
+			if (!time_eq(fs_last_modified(filename), config_last_modified)) {
+				sleep_ms(10); // wait a bit to make sure whatever's writing here is done
+				sandbox_clear(&functions);
+				functions = sandbox_create(filename);
+				config_last_modified = fs_last_modified(filename);
+			}
+		}
+
+		size_t n_menu_items = 0;
+		char selected_item[256] = {0};
+
+		if (!*config_name) {
+			DirEntry entries[1000] = {0};
+			static char text[65536];
+			size_t c = 0;
+			size_t i, n_entries = fs_list_dir("sandboxes", entries, sizeof entries);
+
+			qsort(entries, n_entries, sizeof *entries, fs_dir_entry_cmp_by_name_qsort);
+
+			size_t y_offset = menu_sel < 10 ? 0 : menu_sel - 10;
+
+			for (i = 0; i < n_entries; ++i) {
+				char *dot = strchr(entries[i].name, '.');
+				if (entries[i].type == FS_FILE && dot && strcmp(dot, ".txt") == 0) {
+					if (n_menu_items >= y_offset) {
+						*dot = '\0';
+						if (n_menu_items == menu_sel) {
+							// this is the currently selected item
+							str_print(text + c, sizeof text - c, ">");
+							++c;
+							strbuf_cpy(selected_item, entries[i].name);
+						}
+						str_print(text + c, sizeof text - c, "%s\n", entries[i].name);
+						c += strlen(text + c);
+					}
+					++n_menu_items;
+				}
+			}
+			menu_sel %= n_menu_items;
+			gl_text_set(&menu_text, text);
+			fs_free_dir_entries(entries, n_entries);
 		}
 
 		while (SDL_PollEvent(&event)) {
@@ -369,6 +423,29 @@ int main(int argc, char **argv) {
 					fullscreen = !fullscreen;
 					window_set_fullscreen(fullscreen);
 					break;
+				case SDLK_UP:
+					if (n_menu_items)
+						menu_sel = (menu_sel + n_menu_items - 1) % n_menu_items;
+					break;
+				case SDLK_DOWN:
+					if (n_menu_items)
+						menu_sel = (menu_sel + 1) % n_menu_items;
+					break;
+				case SDLK_RETURN:
+					if (!*config_name && menu_sel < n_menu_items) {
+						strbuf_cpy(config_name, selected_item);
+						config_last_modified = (Time){0};
+						goto top; // force sandbox reload
+					}
+					break;
+				case SDLK_ESCAPE:
+					if (*config_name) {
+						*config_name = '\0';
+						sandbox_clear(&functions);
+						goto top;
+					} else {
+						goto quit;
+					}
 				}
 				break;
 			case SDL_MOUSEMOTION: {
@@ -383,68 +460,68 @@ int main(int argc, char **argv) {
 			}
 		}
 		
-		{
-			int dx = (window_is_key_down(KEY_D) || window_is_key_down(KEY_RIGHT)) - (window_is_key_down(KEY_A) || window_is_key_down(KEY_LEFT));
-			int dy = (window_is_key_down(KEY_PAGEUP) || window_is_key_down(KEY_Q)) - (window_is_key_down(KEY_PAGEDOWN) || window_is_key_down(KEY_E));
-			int dz = (window_is_key_down(KEY_S) || window_is_key_down(KEY_DOWN)) - (window_is_key_down(KEY_W) || window_is_key_down(KEY_UP));
-			if (dx || dy || dz) {
-				const float player_speed = 3;
-				vec3 dp = scale3(normalize3(Vec3((float)dx, (float)dy, (float)dz)), player_speed * dt);
-				mat3 pitch = mat3_pitch(player->pitch);
-				mat3 yaw = mat3_yaw(player->yaw);
-				mat3 rot = mat3_mul(&yaw, &pitch);
-				dp = transform3(&rot, dp);
-				player->pos = add3(player->pos, dp);
+		if (*config_name) {
+			{
+				int dx = (window_is_key_down(KEY_D) || window_is_key_down(KEY_RIGHT)) - (window_is_key_down(KEY_A) || window_is_key_down(KEY_LEFT));
+				int dy = (window_is_key_down(KEY_PAGEUP) || window_is_key_down(KEY_Q)) - (window_is_key_down(KEY_PAGEDOWN) || window_is_key_down(KEY_E));
+				int dz = (window_is_key_down(KEY_S) || window_is_key_down(KEY_DOWN)) - (window_is_key_down(KEY_W) || window_is_key_down(KEY_UP));
+				if (dx || dy || dz) {
+					const float player_speed = 3;
+					vec3 dp = scale3(normalize3(Vec3((float)dx, (float)dy, (float)dz)), player_speed * dt);
+					mat3 pitch = mat3_pitch(player->pitch);
+					mat3 yaw = mat3_yaw(player->yaw);
+					mat3 rot = mat3_mul(&yaw, &pitch);
+					dp = transform3(&rot, dp);
+					player->pos = add3(player->pos, dp);
+				}
 			}
-		}
+			gl.Enable(GL_DEPTH_TEST);
 
-
-		gl.Enable(GL_DEPTH_TEST);
-		
-
-		arr_foreachp(functions, Function, f) {
-			gl.Viewport(0,0,(GLsizei)tex_width,(GLsizei)f->tex_height);
-			gl.BindFramebuffer(GL_FRAMEBUFFER, f->fbo);
-			gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->grains_tex2, 0);
-			gl_program_use(&f->update_program);
-			gl.ActiveTexture(GL_TEXTURE0);
-			gl.BindTexture(GL_TEXTURE_2D, f->grains_tex1);
-			gl_uniform1i(&f->update_program, "u_tex", 0);
-			gl_uniform1i(&f->update_program, "u_new_grains_per_second", (GLint)f->new_grains_per_second);
-			gl_uniform1f(&f->update_program, "u_dt", dt);
-			gl_uniform1f(&f->update_program, "u_rand_seed", randf());
-			gl_uniform1f(&f->update_program, "u_grain_gen_radius", f->grain_gen_radius);
-			gl_vao_render(f->update_vao, NULL);
-		}
-
-		gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
-		{
-			vec2i wsize = window_get_size();
-			gl.Viewport(0,0,wsize.x,wsize.y);
-		}
-		{
-			vec3 p = player->pos;
-			g_camera = mat4_camera(p, player->yaw, player->pitch, degree2rad(45), 1, 50);
-		}
-		arr_foreachp(functions, Function, f) {
-			gl_program_use(&f->grain_program);
-			gl_uniformM4(&f->grain_program, "u_transform", &g_camera);
-			gl_uniform4f(&f->grain_program, "u_color1", f->color1);
-			gl_uniform4f(&f->grain_program, "u_color2", f->color2);
-			gl_uniform1f(&f->grain_program, "u_color_scale", f->color_scale);
-			gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
-			gl.ActiveTexture(GL_TEXTURE0);
-			gl_uniform1i(&f->grain_program, "u_offset_tex", 0);
-			gl.BindVertexArray(f->grain_vao.id);
-			gl.DrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)f->ngrains);
-
-			{ // swap "front and back" grain textures
-				GLuint temp = f->grains_tex1;
-				f->grains_tex1 = f->grains_tex2;
-				f->grains_tex2 = temp;
+			arr_foreachp(functions, Function, f) {
+				gl.Viewport(0,0,(GLsizei)tex_width,(GLsizei)f->tex_height);
+				gl.BindFramebuffer(GL_FRAMEBUFFER, f->fbo);
+				gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->grains_tex2, 0);
+				gl_program_use(&f->update_program);
+				gl.ActiveTexture(GL_TEXTURE0);
+				gl.BindTexture(GL_TEXTURE_2D, f->grains_tex1);
+				gl_uniform1i(&f->update_program, "u_tex", 0);
+				gl_uniform1i(&f->update_program, "u_new_grains_per_second", (GLint)f->new_grains_per_second);
+				gl_uniform1f(&f->update_program, "u_dt", dt);
+				gl_uniform1f(&f->update_program, "u_rand_seed", randf());
+				gl_uniform1f(&f->update_program, "u_grain_gen_radius", f->grain_gen_radius);
+				gl_vao_render(f->update_vao, NULL);
 			}
+
+			gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+			{
+				vec2i wsize = window_get_size();
+				gl.Viewport(0,0,wsize.x,wsize.y);
+			}
+			{
+				vec3 p = player->pos;
+				g_camera = mat4_camera(p, player->yaw, player->pitch, degree2rad(45), 1, 50);
+			}
+			arr_foreachp(functions, Function, f) {
+				gl_program_use(&f->grain_program);
+				gl_uniformM4(&f->grain_program, "u_transform", &g_camera);
+				gl_uniform4f(&f->grain_program, "u_color1", f->color1);
+				gl_uniform4f(&f->grain_program, "u_color2", f->color2);
+				gl_uniform1f(&f->grain_program, "u_color_scale", f->color_scale);
+				gl.BindTexture(GL_TEXTURE_2D, f->grains_tex2);
+				gl.ActiveTexture(GL_TEXTURE0);
+				gl_uniform1i(&f->grain_program, "u_offset_tex", 0);
+				gl.BindVertexArray(f->grain_vao.id);
+				gl.DrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)f->ngrains);
+
+				{ // swap "front and back" grain textures
+					GLuint temp = f->grains_tex1;
+					f->grains_tex1 = f->grains_tex2;
+					f->grains_tex2 = temp;
+				}
+			}
+		} else {
+			gl_text_render(&menu_text, Vec2(0,-1), 1, Vec3(1,1,1), Vec4(0,0,0,1));
 		}
-		
 
 	}
 	
