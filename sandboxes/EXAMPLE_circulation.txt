@@ -15,7 +15,7 @@ color #ffaabb
 # The functions are written in the GLSL language (check out https://www.khronos.org/opengles/sdk/docs/manglsl/docbook4/).
 # You can use all sorts of functions like sin, cos, sqrt,
 # etc. For multiplication you use * and to take a to the power of b you need to use pow(a, b).
-# You can use x,y,z to get the coordinates of the grain, or p to get them as a vector.
+# You can use x,y,z to get the coordinates of the grain, or p to get them as a vector. You can also use pi.
 add vec3(z, 0, -sin(y)*x)
 
 # We can add more functions in this same file. We can change settings before adding our next function

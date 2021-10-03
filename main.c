@@ -56,7 +56,7 @@ static void APIENTRY gl_message_callback(GLenum source, GLenum type, unsigned in
 
 static GLuint g_grain_vshader, g_update_vshader;
 
-static void function_init(Function *f, const char *config_filename, int config_line_number, const char *wind_formula, uint32_t ngrains) {
+static bool function_init(Function *f, const char *config_filename, int config_line_number, const char *wind_formula, uint32_t ngrains) {
 	memset(f, 0, sizeof *f);
 	{
 		GLuint tex[2] = {0};
@@ -126,7 +126,8 @@ static void function_init(Function *f, const char *config_filename, int config_l
 				strbuf_print(log, "Your formula on line %d of %s has errors. Details:\n", config_line_number, config_filename);
 				gl.GetShaderInfoLog(fshader, (GLsizei)(sizeof log - strlen(log)), NULL, log + strlen(log));
 				window_message_box_error("Formula error", log);
-				exit(-1);
+				gl.DeleteShader(fshader);
+				return false;
 			}
 		}
 
@@ -213,7 +214,7 @@ static void function_init(Function *f, const char *config_filename, int config_l
 		vec3 *data = calloc(ndata, sizeof *data); // required to initialize textures to NAN
 		if (!data) {
 			window_message_box_error("Out of memory", "Not enough memory for grains. Try reducing the max number of grains.");
-			exit(-1);
+			return false;
 		}
 		for (int i = 0; i < ndata; ++i) {
 			data[i] = Vec3(NAN, NAN, NAN);
@@ -236,10 +237,27 @@ static void function_init(Function *f, const char *config_filename, int config_l
 		free(data);
 	}
 	gl.GenFramebuffers(1, &f->fbo);
+	return true;
 }
 
+static void sandbox_clear(Function **fs) {
+	arr_foreachp(*fs, Function, f) {
+		gl_vbo_delete(&f->update_vbo);
+		gl_vbo_delete(&f->grain_vbo);
+		gl_vao_delete(&f->update_vao);
+		gl_vao_delete(&f->grain_vao);
+		gl.DeleteFramebuffers(1, &f->fbo);
+		GLuint tex[2] = {f->grains_tex1, f->grains_tex2};
+		gl.DeleteTextures(2, tex);
+		gl.DeleteProgram(f->update_program.id);
+		gl.DeleteProgram(f->grain_program.id);
+	}
+	arr_clear(*fs);
+}
+
+
 // sets various things in `player` according to the configuration
-// and returns a dynamic array of functions
+// and returns a dynamic array of functions, or NULL on failure
 static Function *sandbox_create(const char *config_filename, Player *player) {
 	Function *functions = NULL;
 	FILE *fp = fopen(config_filename, "r");
@@ -266,7 +284,8 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 			strbuf_print(_buf1, __VA_ARGS__);\
 			strbuf_print(_buf2, "%s line %d: %s", config_filename, line_number, _buf1);\
 			window_message_box_error("Error loading sandbox", _buf2);\
-			exit(-1);\
+			sandbox_clear(&functions);\
+			return NULL;\
 		} while (0)
 
 			line[strcspn(line, "\r\n")] = '\0';
@@ -282,7 +301,10 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 			}
 			if (strcmp(command, "add") == 0) {
 				Function *f = arr_addp(functions);
-				function_init(f, config_filename, line_number, args, ngrains);
+				if (!function_init(f, config_filename, line_number, args, ngrains)) {
+					sandbox_clear(&functions);
+					return NULL;
+				}
 				uint32_t nnew = (uint32_t)(grain_refresh_rate * (float)ngrains);
 				f->new_grains_per_second = nnew == 0 ? 1 : nnew;
 				f->grain_gen_radius = grain_gen_radius;
@@ -353,21 +375,6 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 	return functions;
 }
 
-static void sandbox_clear(Function **fs) {
-	arr_foreachp(*fs, Function, f) {
-		gl_vbo_delete(&f->update_vbo);
-		gl_vbo_delete(&f->grain_vbo);
-		gl_vao_delete(&f->update_vao);
-		gl_vao_delete(&f->grain_vao);
-		gl.DeleteFramebuffers(1, &f->fbo);
-		GLuint tex[2] = {f->grains_tex1, f->grains_tex2};
-		gl.DeleteTextures(2, tex);
-		gl.DeleteProgram(f->update_program.id);
-		gl.DeleteProgram(f->grain_program.id);
-	}
-	arr_clear(*fs);
-}
-
 int main(int argc, char **argv) {
 	if (!window_create("sandbox", 1280, 720, 0)) {
 		return -1;
@@ -429,6 +436,11 @@ int main(int argc, char **argv) {
 				sandbox_clear(&functions);
 				functions = sandbox_create(filename, player);
 				config_last_modified = fs_last_modified(filename);
+				if (!functions) {
+					// return to menu if config failed to load
+					*config_name = '\0';
+					goto top;
+				}
 			}
 		}
 
