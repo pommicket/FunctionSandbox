@@ -1,8 +1,4 @@
 // @TODO:
-//  - configurable:
-//     - fov
-//     - far/near clipping plane
-//     - "player" speed
 //  - nice examples with comments
 //  - readme
 /*
@@ -40,9 +36,13 @@ typedef struct {
 	uint32_t tex_height;
 } Function;
 
+// im calling this player because i originally had a game in mind and i dont know what else to call this
 typedef struct {
 	vec3 pos; // position of player's feet
 	float yaw, pitch;
+	float fov;
+	float z_near, z_far;
+	float speed;
 } Player;
 
 static void APIENTRY gl_message_callback(GLenum source, GLenum type, unsigned int id, GLenum severity,
@@ -210,9 +210,11 @@ static void function_init(Function *f, const char *wind_formula, uint32_t ngrain
 	gl.GenFramebuffers(1, &f->fbo);
 }
 
-static Function *sandbox_create(const char *filename) {
+// sets various things in `player` according to the configuration
+// and returns a dynamic array of functions
+static Function *sandbox_create(const char *config_filename, Player *player) {
 	Function *functions = NULL;
-	FILE *fp = fopen(filename, "r");
+	FILE *fp = fopen(config_filename, "r");
 	if (fp) {
 		int line_number = 0;
 		uint32_t ngrains = 100000;
@@ -222,12 +224,19 @@ static Function *sandbox_create(const char *filename) {
 		vec4 color2 = Vec4(1.0f,0,0,1);
 		float color_scale = 0;
 		char line[1024];
+		
+		player->fov = degree2rad(45);
+		player->z_near = 1;
+		player->z_far  = 50;
+		player->speed  = 3;
+
+
 		while (fgets(line, sizeof line, fp)) {
 			++line_number;
 		#define error(...) do {\
 			char _buf1[256], _buf2[256];\
 			strbuf_print(_buf1, __VA_ARGS__);\
-			strbuf_print(_buf2, "%s line %d: %s", filename, line_number, _buf1);\
+			strbuf_print(_buf2, "%s line %d: %s", config_filename, line_number, _buf1);\
 			window_message_box_error("Error loading sandbox", _buf2);\
 			exit(-1);\
 		} while (0)
@@ -290,6 +299,23 @@ static Function *sandbox_create(const char *filename) {
 					color2 = scale4(Vec4((float)r,(float)g,(float)b,255), 1.0f/255.0f);
 				else
 					error("Invalid color: '%s'.", args);
+			} else if (strcmp(command, "fov") == 0) {
+				char *endptr = 0;
+				double d = strtod(args, &endptr);
+				if (*args == '\0' || *endptr != '\0' || d < 1 || d > 90)
+					error("Invalid FOV: '%s' (must be 1-90).", args);
+				else
+					player->fov = degree2rad((float)d);
+			} else if (strcmp(command, "clipping_planes") == 0) {
+				if (sscanf(args, "%f %f", &player->z_near, &player->z_far) != 2 || player->z_near >= player->z_far || player->z_near < 0.01f || player->z_far > 1000)
+					error("Invalid clipping planes: '%s'.", args);
+			} else if (strcmp(command, "move_speed") == 0) {
+				char *endptr = 0;
+				double d = strtod(args, &endptr);
+				if (*args == '\0' || *endptr != '\0' || d < 0.0 || d > 100)
+					error("Invalid move speed: '%s'.", args);
+				else
+					player->speed = (float)d;
 			} else {
 				error("Command not recognized: '%s'.", command);
 			}
@@ -373,7 +399,7 @@ int main(int argc, char **argv) {
 			if (!time_eq(fs_last_modified(filename), config_last_modified)) {
 				sleep_ms(10); // wait a bit to make sure whatever's writing here is done
 				sandbox_clear(&functions);
-				functions = sandbox_create(filename);
+				functions = sandbox_create(filename, player);
 				config_last_modified = fs_last_modified(filename);
 			}
 		}
@@ -466,8 +492,7 @@ int main(int argc, char **argv) {
 				int dy = (window_is_key_down(KEY_PAGEUP) || window_is_key_down(KEY_Q)) - (window_is_key_down(KEY_PAGEDOWN) || window_is_key_down(KEY_E));
 				int dz = (window_is_key_down(KEY_S) || window_is_key_down(KEY_DOWN)) - (window_is_key_down(KEY_W) || window_is_key_down(KEY_UP));
 				if (dx || dy || dz) {
-					const float player_speed = 3;
-					vec3 dp = scale3(normalize3(Vec3((float)dx, (float)dy, (float)dz)), player_speed * dt);
+					vec3 dp = scale3(normalize3(Vec3((float)dx, (float)dy, (float)dz)), player->speed * dt);
 					mat3 pitch = mat3_pitch(player->pitch);
 					mat3 yaw = mat3_yaw(player->yaw);
 					mat3 rot = mat3_mul(&yaw, &pitch);
@@ -499,7 +524,7 @@ int main(int argc, char **argv) {
 			}
 			{
 				vec3 p = player->pos;
-				g_camera = mat4_camera(p, player->yaw, player->pitch, degree2rad(45), 1, 50);
+				g_camera = mat4_camera(p, player->yaw, player->pitch, player->fov, player->z_near, player->z_far);
 			}
 			arr_foreachp(functions, Function, f) {
 				gl_program_use(&f->grain_program);
