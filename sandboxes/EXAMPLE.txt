@@ -1,12 +1,16 @@
 # This file controls the behavior of function sandbox.
 # Here I'll explain what all the settings do, so you can make your own sandboxes.
+# To create a new sandbox, just add a new .txt file in this folder. It'll automatically appear in the sandbox selection menu.
 # Any empty line or line beginning with the '#' character (like these first three) is ignored
+# All the settings below are optional and have defaults. So you could create a sandbox with just
+# one line, e.g. 'add vec3(-z,0,x)'.
 
 # This sets the number of grains used in the simulation to 20,000
 grains 20000
 # The grain "refresh rate" is the proportion of the grains which are
-# regenerated (replaced by new ones in the starting area) every second
-grain_refresh_rate 0.01
+# regenerated (replaced by new ones in the starting area) every second.
+# In other words, (1 / this) gives you the "lifetime" of each grain in seconds.
+grain_refresh_rate 0.1
 # This controls the size of the starting area grains are added to
 start_radius 3
 # Set the color of the grains (you can look up "color picker" to find tools for finding color codes)

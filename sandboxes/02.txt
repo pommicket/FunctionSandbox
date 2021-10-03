@@ -1,0 +1,5 @@
+grains 1000000
+color_scale 1
+color #ffffff
+color2 #7f7f7f
+add vec3(-tan(y)*x, cos(z)*y, sin(z)*x)

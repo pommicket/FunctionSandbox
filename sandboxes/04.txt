@@ -1,0 +1,5 @@
+grains 500000
+color_scale 1
+color2 #0000ff
+color #ffffff
+add 0.1*vec3(1.0/z, x*z*tan(y), y*x*tan(z))

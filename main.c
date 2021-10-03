@@ -1,6 +1,3 @@
-// @TODO:
-//  - readme
-//  - more examples
 /*
 Anyone is free to modify/distribute/use/sell/etc
 this software for any purpose by any means.
@@ -71,7 +68,7 @@ static bool function_init(Function *f, const char *config_filename, int config_l
 		strbuf_print(fshader_code,
 			"uniform sampler2D u_tex;\n"
 			"uniform float u_dt;\n"
-			"uniform int u_new_grains_per_second;\n"
+			"uniform float u_new_grains_per_second;\n"
 			"uniform float u_rand_seed;\n"
 			"uniform float u_grain_gen_radius;\n"
 			"vec3 rand(vec3 co) {\n"
@@ -86,10 +83,11 @@ static bool function_init(Function *f, const char *config_filename, int config_l
 			"void main() {\n"
 			"  ivec2 pixel = ivec2(gl_FragCoord.xy);\n"
 			"  int pixel_idx = (pixel.y << 10) | pixel.x;\n"
-			"  if (pixel_idx < u_new_grains_per_second) {\n"
+			"  int nnew = int(u_new_grains_per_second * u_dt);\n"
+			"  if (pixel_idx < nnew) {\n"
 			"    gl_FragColor = vec4(u_grain_gen_radius * rand(vec3(gl_FragCoord.xy * 0.001, u_rand_seed)), 0.0);\n"
 			"  } else {\n"
-			"    int src_pixel_idx = pixel_idx - u_new_grains_per_second;\n"
+			"    int src_pixel_idx = pixel_idx - nnew;\n"
 			"    ivec2 src_pixel = ivec2(src_pixel_idx & 1023, src_pixel_idx >> 10);\n"
 			"    vec3 p = texelFetch(u_tex, src_pixel, 0).xyz;\n"
 			"    float x = p.x, y = p.y, z = p.z;\n"
@@ -264,7 +262,7 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 	if (fp) {
 		int line_number = 0;
 		uint32_t ngrains = 100000;
-		float grain_refresh_rate = 0.01f;
+		float grain_refresh_rate = 0.05f;
 		float grain_gen_radius = 2;
 		vec4 color1 = Vec4(1.0f,0.8f,.6f,1);
 		vec4 color2 = Vec4(1.0f,0,0,1);
@@ -550,7 +548,7 @@ int main(int argc, char **argv) {
 				gl.ActiveTexture(GL_TEXTURE0);
 				gl.BindTexture(GL_TEXTURE_2D, f->grains_tex1);
 				gl_uniform1i(&f->update_program, "u_tex", 0);
-				gl_uniform1i(&f->update_program, "u_new_grains_per_second", (GLint)f->new_grains_per_second);
+				gl_uniform1f(&f->update_program, "u_new_grains_per_second", (float)f->new_grains_per_second);
 				gl_uniform1f(&f->update_program, "u_dt", dt);
 				gl_uniform1f(&f->update_program, "u_rand_seed", randf());
 				gl_uniform1f(&f->update_program, "u_grain_gen_radius", f->grain_gen_radius);

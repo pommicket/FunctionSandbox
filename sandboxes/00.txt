@@ -1,0 +1,2 @@
+color_scale 0.1
+add vec3(y * y * tan(z), z * z * cos(x), -x * x * tan(y))
