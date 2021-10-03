@@ -27,14 +27,15 @@ All the pre-installed sandboxes were just made with trial and error.
 
 ## Compiling it yourself
 
-First, install SDL2. On Linux, just run
+On Linux, install SDL2 with
 
 ```
 sudo apt install libsdl2-dev
 ```
 
-or equivalent. On Windows, download Visual Studio, [the VC development libraries for SDL2](https://libsdl.org/release/SDL2-devel-2.0.16-VC.zip),
-add `vcvarsall.bat` to your PATH, then run `make.bat`.
+or equivalent, then run `make release`.
+On Windows, download Visual Studio, [the VC development libraries for SDL2](https://libsdl.org/release/SDL2-devel-2.0.16-VC.zip),
+add `vcvarsall.bat` to your PATH, then run `make.bat release`.
 
 Alternatively, you can just compile `main.c` with any C compiler, making sure that `SDL.h` is in your include path (and you're linking with SDL2).
 

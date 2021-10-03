@@ -377,7 +377,7 @@ int main(int argc, char **argv) {
 	if (!window_create("sandbox", 1280, 720, 0)) {
 		return -1;
 	}
-	if (gl_version_major * 100 + gl_version_minor < 310) {
+	if (gl_version_major * 100 + gl_version_minor < 310) { // we need glDrawArraysInstanced
 		window_message_box_error("Error", "Couldn't get OpenGL 3.1 context (your graphics drivers are too old).");
 		return -1;
 	}

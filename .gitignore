@@ -1,4 +1,6 @@
 sandbox
+*.tar.gz
+*.zip
 tags
 TAGS
 *~
