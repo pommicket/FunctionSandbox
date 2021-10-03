@@ -1,6 +1,6 @@
 // @TODO:
-//  - nice examples with comments
 //  - readme
+//  - more examples
 /*
 Anyone is free to modify/distribute/use/sell/etc
 this software for any purpose by any means.
@@ -56,7 +56,7 @@ static void APIENTRY gl_message_callback(GLenum source, GLenum type, unsigned in
 
 static GLuint g_grain_vshader, g_update_vshader;
 
-static void function_init(Function *f, const char *wind_formula, uint32_t ngrains) {
+static void function_init(Function *f, const char *config_filename, int config_line_number, const char *wind_formula, uint32_t ngrains) {
 	memset(f, 0, sizeof *f);
 	{
 		GLuint tex[2] = {0};
@@ -101,8 +101,35 @@ static void function_init(Function *f, const char *wind_formula, uint32_t ngrain
 			wind_formula
 		);
 
-		GLuint fshader = V_gl_shader_compile_code("updatef.glsl", NULL, fshader_code, GL_FRAGMENT_SHADER);
+		GLuint fshader = gl.CreateShader(GL_FRAGMENT_SHADER);
+		const GLchar *sources[2];
 		GLint status = 0;
+
+		char header[256];
+		strbuf_print(header,
+			"#version %d\n"
+			"#define GLSL_VERSION %d\n"
+			"#define PI 3.14159265\n"
+			"#define pi PI\n"
+			"#line 1\n", V_glsl_version(), V_glsl_version());
+		sources[0] = header;
+		sources[1] = fshader_code;
+
+		gl.ShaderSource(fshader, 2, sources, NULL);
+		gl.CompileShader(fshader);
+		{
+			gl.GetShaderiv(fshader, GL_COMPILE_STATUS, &status);
+			if (status == 1) {
+				// all good!
+			} else {
+				char log[256];
+				strbuf_print(log, "Your formula on line %d of %s has errors. Details:\n", config_line_number, config_filename);
+				gl.GetShaderInfoLog(fshader, (GLsizei)(sizeof log - strlen(log)), NULL, log + strlen(log));
+				window_message_box_error("Formula error", log);
+				exit(-1);
+			}
+		}
+
 		GLuint prog = gl.CreateProgram();
 		gl.AttachShader(prog, g_update_vshader);
 		gl.AttachShader(prog, fshader);
@@ -118,6 +145,7 @@ static void function_init(Function *f, const char *wind_formula, uint32_t ngrain
 	{
 		static char fshader_code[65536];
 		strbuf_print(fshader_code,
+			"#define pi PI\n"
 			"uniform vec4 u_color1, u_color2;\n"
 			"uniform float u_color_scale;\n"
 			"varying vec3 pos;\n"
@@ -242,7 +270,7 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 		} while (0)
 
 			line[strcspn(line, "\r\n")] = '\0';
-			if (line[0] == '#' || line[0] == '\0') break;
+			if (line[0] == '#' || line[0] == '\0') continue;
 
 			char *command = line;
 			char *args = strchr(command, ' ');
@@ -254,7 +282,7 @@ static Function *sandbox_create(const char *config_filename, Player *player) {
 			}
 			if (strcmp(command, "add") == 0) {
 				Function *f = arr_addp(functions);
-				function_init(f, args, ngrains);
+				function_init(f, config_filename, line_number, args, ngrains);
 				uint32_t nnew = (uint32_t)(grain_refresh_rate * (float)ngrains);
 				f->new_grains_per_second = nnew == 0 ? 1 : nnew;
 				f->grain_gen_radius = grain_gen_radius;

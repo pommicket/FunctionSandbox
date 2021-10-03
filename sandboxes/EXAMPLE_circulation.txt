@@ -1,0 +1,43 @@
+# This file controls the behavior of function sandbox.
+# Here I'll explain what all the settings do, so you can make your own sandboxes.
+# Any empty line or line beginning with the '#' character (like these first three) is ignored
+
+# This sets the number of grains used in the simulation to 20,000
+grains 20000
+# The grain "refresh rate" is the proportion of the grains which are
+# regenerated (replaced by new ones in the starting area) every second
+grain_refresh_rate 0.01
+# This controls the size of the starting area grains are added to
+start_radius 3
+# Set the color of the grains (you can look up "color picker" to find tools for finding color codes)
+color #ffaabb
+# Let's add a function now!
+# The functions are written in the GLSL language (check out https://www.khronos.org/opengles/sdk/docs/manglsl/docbook4/).
+# You can use all sorts of functions like sin, cos, sqrt,
+# etc. For multiplication you use * and to take a to the power of b you need to use pow(a, b).
+# You can use x,y,z to get the coordinates of the grain, or p to get them as a vector.
+add vec3(z, 0, -sin(y)*x)
+
+# We can add more functions in this same file. We can change settings before adding our next function
+# to make them only apply to it.
+# We'll use more grains for this one.
+grains 30000
+# For this function, let's color-code grains based on speed. First, we can set the two colors,
+# for "slow" grains and "fast" grains.
+color #0000ff
+color2 #ff0000
+# And now we need to specify the "scaling", i.e. how much change in speed corresponds to
+# change in color.
+color_scale 1
+# Now let's add the function.
+add vec3(y, -x*cos(x), 0)
+
+# We can also control some settings which don't apply to any particular function. You can put these anywhere.
+# This controls your movement speed.
+move_speed 5.0
+# Now we get to some technical settings, which you can just leave set to the defaults
+# Field of view in degrees
+fov 50
+# Near and far clipping planes, respectively
+clipping_planes 1 100
+
