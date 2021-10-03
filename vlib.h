@@ -79,6 +79,7 @@ extern "C" {
 #include <errno.h>
 #include <signal.h>
 #include <limits.h>
+#include <ctype.h>
 
 // what the fuck is wrong with you microsoft
 #ifdef min
@@ -105,6 +106,10 @@ extern "C" {
 	#endif
 #endif
 
+typedef unsigned int uint;
+typedef unsigned long ulong;
+typedef unsigned long long ullong;
+
 // ---- WINAPI FUNCTIONS ----
 #if V_WINDOWS
 void OutputDebugStringA(const char *);
@@ -130,12 +135,6 @@ void OutputDebugStringA(const char *);
 	_Pragma("GCC diagnostic ignored \"-Wshadow\"")
 #define NO_WARN_END \
 	_Pragma("GCC diagnostic pop")
-#elif V_MSVC
-#define NO_WARN_START \
-	_Pragma("warning(push)") \
-	_Pragma("warning(disable: 4456 4457 4100 4244 4701)")
-#define NO_WARN_END \
-	_Pragma("warning(pop)")
 #else
 #define NO_WARN_START
 #define NO_WARN_END
@@ -11151,7 +11150,6 @@ V_DECL bool window_create(const char *title, int width, int height, uint32_t fla
 		}
 	} else {
 		strbuf_cpy(V_window_error, SDL_GetError());
-		V_window_die();
 		if (!(flags & WINDOW_CREATE_DONT_QUIT_ON_ERROR))
 			V_window_die();
 	}
@@ -11203,7 +11201,7 @@ typedef struct {
 static V_AudioUserData V_audio_user_data = {0};
 static SDL_AudioDeviceID V_audio_device;
 
-static SDLCALL void V_audio_callback(void *userdata, uint8_t *buffer, int len) {
+static void V_audio_callback(void *userdata, uint8_t *buffer, int len) {
 	V_AudioUserData *audio = (V_AudioUserData *)userdata;
 	if (len > 0) {
 		memset(buffer, 0, (size_t)len);
@@ -12974,6 +12972,11 @@ static void model_delete(Model *model) {
 		return main_(argc, argv);
 	}
 	#endif
+
+	#ifdef main
+	#undef main
+	#endif
+	
 	#define main main_
 #endif
 

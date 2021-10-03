@@ -35,7 +35,11 @@ sudo apt install libsdl2-dev
 
 or equivalent, then run `make release`.
 On Windows, download Visual Studio, [the VC development libraries for SDL2](https://libsdl.org/release/SDL2-devel-2.0.16-VC.zip),
-add `vcvarsall.bat` to your PATH, then run `make.bat release`.
+extract it, rename the folder to `SDL2`, and place it in the same folder
+as the source code.
+Then add `vcvarsall.bat` to your PATH, and run `make.bat release`.
+Finally you'll need to copy `SDL2\lib\x64\SDL2.dll` to the same folder as
+`sandbox.exe`.
 
 Alternatively, you can just compile `main.c` with any C compiler, making sure that `SDL.h` is in your include path (and you're linking with SDL2).
 
