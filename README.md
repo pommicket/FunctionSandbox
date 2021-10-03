@@ -11,7 +11,7 @@ It does all its computations on your GPU!
 
 ## Instructions
 
-You can go to https://pommicket.itch.io/FunctionSandbox to get executables
+You can go to https://pommicket.itch.io/function-sandbox to get executables
 for Windows/Linux.
 
 On Linux you might need to install SDL2 (there's a very good chance you already have it installed). On Debian/Ubuntu,
